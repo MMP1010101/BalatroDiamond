@@ -54,40 +54,85 @@ function isaac_joker:calculate(card, context)
             colour = G.C.MULT
         }
     end
+    
+    -- Dar un D6 cada vez que se derrota una ciega (solo si es la baraja de Isaac)
+    if context.end_of_round and not context.individual and not context.repetition then
+        -- Debug: verificar las condiciones
+        print("Isaac debug: end_of_round triggered")
+        print("Isaac debug: selected_back = " .. tostring(G.GAME.selected_back and G.GAME.selected_back.name))
+        print("Isaac debug: blind.defeated = " .. tostring(G.GAME.blind and G.GAME.blind.defeated))
+        
+        if G.GAME.selected_back and G.GAME.selected_back.name == 'b_diamond_isaac_deck' and
+           G.GAME.blind and G.GAME.blind.defeated then
+            
+            print("Isaac debug: All conditions met, adding D6")
+            
+            G.E_MANAGER:add_event(Event({
+                trigger = 'after',
+                delay = 0.5,
+                func = function()
+                    -- Verificar si hay espacio en el área de consumibles
+                    if #G.consumeables.cards < G.consumeables.config.card_limit then
+                        local d6_card = create_card('Spectral', G.consumeables, nil, nil, nil, nil, 'c_diamond_d6')
+                        d6_card:add_to_deck()
+                        G.consumeables:emplace(d6_card)
+                        d6_card:start_materialize()
+                        
+                        -- Animación especial
+                        card:juice_up(0.8, 0.8)
+                        d6_card:juice_up(0.3, 0.5)
+                        
+                        -- Mensaje de confirmación
+                        card_eval_status_text(card, 'extra', nil, nil, nil, {
+                            message = "¡Isaac encuentra un D6!",
+                            colour = G.C.SPECTRAL
+                        })
+                        
+                        play_sound('generic1')
+                        print("Isaac debug: D6 added successfully")
+                    else
+                        -- Si no hay espacio, mostrar un mensaje
+                        card_eval_status_text(card, 'extra', nil, nil, nil, {
+                            message = "¡No hay espacio para el D6!",
+                            colour = G.C.RED
+                        })
+                        print("Isaac debug: No space for D6")
+                    end
+                    return true
+                end
+            }))
+        else
+            print("Isaac debug: Conditions not met")
+        end
+    end
 end
 
--- Crear el joker D6
-local d6_joker = SMODS.Joker {
+-- Crear el consumible D6
+local d6_consumable = SMODS.Consumable {
     key = "d6",
+    set = "Spectral", -- Usar el set Spectral para consumibles
     loc_txt = {
         name = "D6",
         text = {
-            "Al {C:attention}venderse{}, reemplaza",
-            "todos los {C:attention}Comodines{}",
-            "por otros {C:green}aleatorios{}"
+            "Reemplaza todos los {C:attention}Comodines{}",
+            "por otros {C:green}completamente aleatorios{}"
         }
     },
     config = {},
-    rarity = 3, -- Raro
-    cost = 8,
+    cost = 4,
     unlocked = true,
     discovered = true,
-    blueprint_compat = false, -- No compatible con blueprint
-    eternal_compat = true,
-    atlas = "d6_atlas", -- Usando su propio atlas
-    pos = {x = 0, y = 0} -- Posición en su atlas
-}
-
--- Definir el cálculo del D6 - efecto al venderse
-function d6_joker:calculate(card, context)
-    -- Cuando se vende la carta
-    if context.selling_card and context.card == card then
-        -- Obtener todos los jokers actuales (excepto el D6 que se está vendiendo)
+    atlas = "d6_atlas",
+    pos = {x = 0, y = 0},
+    can_use = function(self, card)
+        -- Solo se puede usar si hay al menos un joker
+        return #G.jokers.cards > 0
+    end,
+    use = function(self, card, area, copier)
+        -- Obtener todos los jokers actuales
         local jokers_to_replace = {}
         for i = 1, #G.jokers.cards do
-            if G.jokers.cards[i] ~= card then
-                table.insert(jokers_to_replace, G.jokers.cards[i])
-            end
+            table.insert(jokers_to_replace, G.jokers.cards[i])
         end
         
         -- Solo ejecutar si hay jokers para reemplazar
@@ -144,7 +189,7 @@ function d6_joker:calculate(card, context)
             })
         end
     end
-end
+}
 
 -- Función para agregar el D6 al inicio
 local function add_starting_d6()
@@ -154,10 +199,25 @@ local function add_starting_d6()
             trigger = 'after',
             delay = 0.1,
             func = function()
-                local d6_card = create_card('Joker', G.jokers, nil, nil, nil, nil, 'j_diamond_d6')
-                d6_card:add_to_deck()
-                G.jokers:emplace(d6_card)
-                d6_card:start_materialize()
+                -- Agregar el joker de Isaac
+                local isaac_card = create_card('Joker', G.jokers, nil, nil, nil, nil, 'j_diamond_isaac')
+                isaac_card:add_to_deck()
+                G.jokers:emplace(isaac_card)
+                isaac_card:start_materialize()
+                
+                -- Agregar el D6 consumible si hay espacio
+                if #G.consumeables.cards < G.consumeables.config.card_limit then
+                    local d6_card = create_card('Spectral', G.consumeables, nil, nil, nil, nil, 'c_diamond_d6')
+                    d6_card:add_to_deck()
+                    G.consumeables:emplace(d6_card)
+                    d6_card:start_materialize()
+                    
+                    -- Mensaje de confirmación
+                    card_eval_status_text(isaac_card, 'extra', nil, nil, nil, {
+                        message = "¡Isaac comienza su aventura!",
+                        colour = G.C.SPECTRAL
+                    })
+                end
                 return true
             end
         }))
@@ -242,11 +302,11 @@ local function add_roca_effect()
                         message = "¡Todo es roca!",
                         colour = G.C.ORANGE
                     })
-                    play_sound('generic1')
-                end
+                    play_sound('generic1')                end
                 
                 return true
-            end        }))
+            end
+        }))
     end
 end
 
@@ -348,11 +408,16 @@ local original_reroll_shop = nil
 local original_ease_dollars = nil
 local original_use_card = nil
 
+-- Función para verificar si la partida actual es del Keeper
+local function is_keeper_deck()
+    return G.GAME and G.GAME.selected_back and G.GAME.selected_back.name == 'b_diamond_keeper_deck'
+end
+
 -- Función para inicializar los hooks una vez que el juego esté cargado
 local function initialize_lost_hooks()
     if not original_buy_from_shop and G and G.FUNCS and G.FUNCS.buy_from_shop then
         original_buy_from_shop = G.FUNCS.buy_from_shop
-        G.FUNCS.buy_from_shop = function(e)
+        local new_buy_from_shop = function(e)
             -- Si es The Lost, forzar dinero gratis para todo excepto rerolls
             if G and G.GAME and G.GAME.lost_deck_active and G.STATE == G.STATES.SHOP then
                 local card = e.config.ref_table
@@ -373,21 +438,23 @@ local function initialize_lost_hooks()
             end
             return original_buy_from_shop(e)
         end
+        G.FUNCS.buy_from_shop = new_buy_from_shop
     end
     
     if not original_reroll_shop and G and G.FUNCS and G.FUNCS.reroll_shop then
         original_reroll_shop = G.FUNCS.reroll_shop
-        G.FUNCS.reroll_shop = function(e)
+        local new_reroll_shop = function(e)
             print("The Lost: Reroll shop (should cost money)")
             -- Los rerolls siempre funcionan normalmente
             return original_reroll_shop(e)
         end
+        G.FUNCS.reroll_shop = new_reroll_shop
     end
     
     -- Interceptar también use_card para boosters
     if not original_use_card and G and G.FUNCS and G.FUNCS.use_card then
         original_use_card = G.FUNCS.use_card
-        G.FUNCS.use_card = function(e)
+        local new_use_card = function(e)
             -- Si es The Lost y estamos en la tienda
             if G and G.GAME and G.GAME.lost_deck_active and G.STATE == G.STATES.SHOP then
                 local card = e.config.ref_table
@@ -408,11 +475,11 @@ local function initialize_lost_hooks()
             end
             return original_use_card(e)
         end
-    end
-    
+        G.FUNCS.use_card = new_use_card
+    end    
     if not original_ease_dollars and ease_dollars then
         original_ease_dollars = ease_dollars
-        ease_dollars = function(mod, instant)
+        local new_ease_dollars = function(mod, instant)
             -- Si es The Lost y estamos gastando dinero (mod negativo)
             if G and G.GAME and G.GAME.lost_deck_active and mod < 0 and G.STATE == G.STATES.SHOP then
                 -- Solo permitir gastos si es específicamente un reroll
@@ -427,8 +494,18 @@ local function initialize_lost_hooks()
                     print("The Lost: ALLOWED reroll cost of $" .. math.abs(mod))
                 end
             end
+            
+            -- Si no es la baraja del Keeper y se está intentando ganar dinero (mod positivo)
+            if not is_keeper_deck() and mod > 0 then
+                -- Bloquear completamente la ganancia de dinero
+                print("BLOCKED money gain of $" .. mod .. " (not Keeper deck)")
+                return
+            end
+            
+            -- Si es Keeper o es gasto de dinero (mod negativo), permitir normalmente
             return original_ease_dollars(mod, instant)
         end
+        ease_dollars = new_ease_dollars
     end
 end
 
@@ -475,6 +552,106 @@ local function make_shop_free_if_lost()
     end
 end
 
+-- Función para verificar si el jugador debe perder por dinero insuficiente (La Bolsa)
+local function check_keeper_lose_condition(card)
+    if G.GAME.dollars <= card.ability.extra.lose_threshold then
+        -- El jugador pierde
+        G.E_MANAGER:add_event(Event({
+            trigger = 'after',
+            delay = 1.0,
+            func = function()
+                -- Efecto visual de pérdida
+                card:juice_up(1.0, 1.0)
+                
+                -- Mensaje dramático
+                card_eval_status_text(card, 'extra', nil, nil, nil, {
+                    message = "¡LA BOLSA SE VACÍA!",
+                    colour = G.C.MONEY
+                })
+                
+                play_sound('tarot2', 0.8, 0.6)
+                
+                -- Iniciar secuencia de pérdida después de un delay
+                G.E_MANAGER:add_event(Event({
+                    trigger = 'after',
+                    delay = 2.0,
+                    func = function()
+                        -- Forzar pérdida del juego
+                        G.GAME.game_over = true
+                        G.STATE = G.STATES.GAME_OVER
+                        G.STATE_COMPLETE = false
+                        return true
+                    end
+                }))
+                
+                return true
+            end
+        }))
+        return true
+    end
+    return false
+end
+
+-- Función para agregar el joker La Bolsa eterno al inicio (Keeper)
+local function add_starting_keeper()
+    if G.GAME.selected_back and G.GAME.selected_back.name == 'b_diamond_keeper_deck' then
+        -- Verificar que no tengamos ya un joker La Bolsa
+        local has_keeper = false
+        if G.jokers and G.jokers.cards then
+            for i = 1, #G.jokers.cards do
+                local card = G.jokers.cards[i]
+                if card and card.config and card.config.center and card.config.center.key == 'j_diamond_keeper' then
+                    has_keeper = true
+                    break
+                end
+            end
+        end
+        
+        -- Solo crear si no tenemos ya uno
+        if not has_keeper then
+            G.E_MANAGER:add_event(Event({
+                trigger = 'after',
+                delay = 0.1,
+                func = function()
+                    local keeper_card = create_card('Joker', G.jokers, nil, nil, nil, nil, 'j_diamond_keeper')
+                    keeper_card:add_to_deck()
+                    
+                    -- Hacer el joker Eterno
+                    keeper_card.ability.eternal = true
+                    
+                    G.jokers:emplace(keeper_card)
+                    keeper_card:start_materialize()
+                    return true
+                end
+            }))
+        end
+    end
+end
+
+-- Función para aplicar el efecto del Keeper (slot extra)
+local function apply_keeper_effect()
+    if G.GAME.selected_back and G.GAME.selected_back.name == 'b_diamond_keeper_deck' then
+        -- Añadir un slot extra de joker
+        G.jokers.config.card_limit = G.jokers.config.card_limit + 1
+        
+        G.E_MANAGER:add_event(Event({
+            trigger = 'after',
+            delay = 0.1,
+            func = function()
+                -- Mensaje de confirmación
+                card_eval_status_text(G.deck.cards[1] or {T = {x = 0, y = 0}}, 'extra', nil, nil, nil, {
+                    message = "¡Keeper: +1 slot de Joker!",
+                    colour = G.C.MONEY
+                })
+                play_sound('generic1')
+                return true
+            end
+        }))
+    end
+end
+
+-- Sistema para bloquear dinero excepto para Keeper
+local original_ease_dollars_global = nil
 -- Event listener para el inicio de la partida
 local game_start_run_ref = Game.start_run
 function Game:start_run(args)
@@ -484,8 +661,10 @@ function Game:start_run(args)
     local ret = game_start_run_ref(self, args)
     add_starting_d6()
     add_starting_samson()
+    add_starting_keeper()
     add_eden_random_jokers()
     apply_lost_effect()
+    apply_keeper_effect()
     add_cristal_effect()
     add_roca_effect()
     return ret
@@ -503,6 +682,7 @@ function Game:update_round(dt)
             G.GAME.round_resets.hands = 1
         end
     end
+    
     return update_round_ref(self, dt)
 end
 
@@ -518,8 +698,9 @@ local isaac_deck = SMODS.Back {
     loc_txt = {
         name = "Baraja de Isaac",
         text = {
-            "Empiezas con un {C:attention}D6{}",
-            "en tu inventario"
+            "Empiezas con {C:attention}Isaac{} y un {C:spectral}D6{}",
+            "Isaac te da un {C:spectral}D6{} cada vez",
+            "que derrotas una {C:attention}Ciega{}"
         }
     },
     atlas = "isaac_atlas",
@@ -668,8 +849,7 @@ local eden_deck = SMODS.Back {
 local lost_deck = SMODS.Back {
     key = "lost_deck",
     loc_txt = {
-        name = "Baraja de The Lost",
-        text = {
+        name = "Baraja de The Lost",        text = {
             "Solo tienes {C:attention}1 mano{} por ronda",
             "Toda la {C:attention}tienda{} es {C:green}gratis{}",
             "{C:inactive}(excepto rerolls)"
@@ -682,7 +862,24 @@ local lost_deck = SMODS.Back {
     pos = {x = 0, y = 0}
 }
 
-
+-- Crear la baraja del Keeper
+local keeper_deck = SMODS.Back {
+    key = "keeper_deck",
+    loc_txt = {
+        name = "Baraja del Keeper",
+        text = {
+            "Empiezas con {C:attention}La Bolsa{} {C:red}Eterna{}",
+            "Tienes {C:attention}+1{} slot de Joker",
+            "{C:red}-1{} mano, {C:red}-1{} descarte",
+            "{C:inactive}(6 slots en total)"
+        }
+    },
+    config = {hands = -2, discards = -1},
+    unlocked = true,
+    discovered = true,
+    atlas = "keeper_atlas",
+    pos = {x = 0, y = 0}
+}
 
 -- Registrar el atlas de Cristal
 SMODS.Atlas {
@@ -733,6 +930,140 @@ local roca_deck = SMODS.Back {
     atlas = "roca_atlas",
     pos = {x = 0, y = 0}
 }
+
+-- Registrar el atlas de La Bolsa (usamos la imagen de The Keeper)
+SMODS.Atlas {
+    key = "keeper_atlas",
+    path = "kiper.png",
+    px = 71,
+    py = 95
+}
+
+-- Función para verificar si el jugador debe perder por dinero insuficiente
+local function check_keeper_lose_condition(card)
+    if G.GAME.dollars <= card.ability.extra.lose_threshold then
+        -- El jugador pierde
+        G.E_MANAGER:add_event(Event({
+            trigger = 'after',
+            delay = 1.0,
+            func = function()
+                -- Efecto visual de pérdida
+                card:juice_up(1.0, 1.0)
+                
+                -- Mensaje dramático
+                card_eval_status_text(card, 'extra', nil, nil, nil, {
+                    message = "¡LA BOLSA SE VACÍA!",
+                    colour = G.C.MONEY
+                })
+                
+                play_sound('tarot2', 0.8, 0.6)
+                
+                -- Iniciar secuencia de pérdida después de un delay
+                G.E_MANAGER:add_event(Event({
+                    trigger = 'after',
+                    delay = 2.0,
+                    func = function()
+                        -- Forzar pérdida del juego
+                        G.GAME.game_over = true
+                        G.STATE = G.STATES.GAME_OVER
+                        G.STATE_COMPLETE = false
+                        return true
+                    end
+                }))
+                
+                return true
+            end
+        }))
+        return true
+    end
+    return false
+end
+
+-- Crear el joker La Bolsa (The Keeper)
+local keeper_joker = SMODS.Joker {
+    key = "keeper",
+    loc_txt = {
+        name = "La Bolsa",
+        text = {
+            "Todas las cartas dan {C:money}$1{} cuando puntúan",
+            "Pierdes el juego si tienes {C:money}$3{} o menos",
+            "Al derrotar una {C:attention}Ciega{}, el límite",
+            "aumenta en {C:money}$3{}",
+            "{C:inactive}(Límite actual: {C:money}$#1#{C:inactive})"
+        }
+    },
+    config = {
+        extra = {
+            lose_threshold = 3,
+            threshold_increase = 3
+        }    },
+    rarity = 3,
+    cost = 8,
+    unlocked = true,
+    discovered = true,
+    blueprint_compat = true,
+    eternal_compat = true,
+    atlas = "keeper_atlas",
+    pos = {x = 0, y = 0}
+}
+
+-- Definir el cálculo del joker La Bolsa
+function keeper_joker:calculate(card, context)
+    -- Dar dinero por cada carta que puntúa
+    if context.individual and context.cardarea == G.play then
+        -- Dar $1 por cada carta jugada de forma simple
+        return {
+            dollars = 1,
+            message = "+$1",
+            colour = G.C.MONEY
+        }
+    end
+    
+    -- Verificar condición de pérdida solo al final de la mano
+    if context.end_of_round and not context.individual and not context.repetition and not context.blueprint then
+        -- Verificar si hemos perdido por falta de dinero
+        if G.GAME.dollars <= card.ability.extra.lose_threshold then
+            G.E_MANAGER:add_event(Event({
+                trigger = 'after',
+                delay = 0.3,
+                func = function()
+                    return check_keeper_lose_condition(card)
+                end
+            }))
+        end
+        
+        -- Aumentar el límite al derrotar una ciega exitosamente
+        if G.GAME.blind.defeated then
+            local old_threshold = card.ability.extra.lose_threshold
+            card.ability.extra.lose_threshold = card.ability.extra.lose_threshold + card.ability.extra.threshold_increase
+            
+            G.E_MANAGER:add_event(Event({
+                trigger = 'after',
+                delay = 0.5,
+                func = function()
+                    -- Animación de mejora
+                    card:juice_up(0.8, 0.8)
+                    
+                    -- Sonido de mejora
+                    play_sound('generic1', 1.0, 0.8)
+                    
+                    -- Mensaje de mejora
+                    card_eval_status_text(card, 'extra', nil, nil, nil, {
+                        message = "¡Límite: $" .. old_threshold .. " → $" .. card.ability.extra.lose_threshold .. "!",
+                        colour = G.C.MONEY
+                    })
+                    
+                    return true
+                end
+            }))
+        end
+    end
+end
+
+-- Función para mostrar variables localizadas del joker
+function keeper_joker:loc_vars(info_queue, card)
+    return {vars = {card.ability.extra.lose_threshold}}
+end
 
 ----------------------------------------------
 ------------MOD CODE END----------------------
